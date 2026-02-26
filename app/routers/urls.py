@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app import models, schemas
+from app.cache import get_cached_url, set_cached_url
 
 router = APIRouter()
 
@@ -43,11 +44,20 @@ def get_stats(short_code: str, db: Session = Depends(get_db)):
 
 @router.get("/{short_code}")
 def redirect_url(short_code: str, db: Session = Depends(get_db)):
+    # check Redis first
+    cached = get_cached_url(short_code)
+    if cached:
+        return RedirectResponse(url=cached.decode("utf-8"))
+
+    # not in cache — hit the DB
     db_url = db.query(models.URL).filter(models.URL.short_code == short_code).first()
     if not db_url:
         raise HTTPException(status_code=404, detail="Short code not found")
 
     db_url.clicks += 1
     db.commit()
+
+    # save to cache for next time
+    set_cached_url(short_code, db_url.original_url)
 
     return RedirectResponse(url=db_url.original_url)
