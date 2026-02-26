@@ -3,6 +3,7 @@ import string
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
 from app import models, schemas
 
@@ -16,20 +17,20 @@ def generate_short_code(length=6):
 
 @router.post("/shorten", response_model=schemas.URLResponse)
 def shorten_url(url: schemas.URLCreate, db: Session = Depends(get_db)):
-    short_code = generate_short_code()
-
-    # make sure it's unique
-    while db.query(models.URL).filter(models.URL.short_code == short_code).first():
-        short_code = generate_short_code()
-
-    db_url = models.URL(
-        original_url=str(url.original_url),
-        short_code=short_code
-    )
-    db.add(db_url)
-    db.commit()
-    db.refresh(db_url)
-    return db_url
+    for _ in range(5):
+        try:
+            short_code = generate_short_code()
+            db_url = models.URL(
+                original_url=str(url.original_url),
+                short_code=short_code
+            )
+            db.add(db_url)
+            db.commit()
+            db.refresh(db_url)
+            return db_url
+        except IntegrityError:
+            db.rollback()
+    raise HTTPException(status_code=500, detail="Could not generate unique code")
 
 
 @router.get("/stats/{short_code}", response_model=schemas.URLStats)
